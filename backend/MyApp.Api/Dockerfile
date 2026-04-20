@@ -15,12 +15,14 @@ RUN dotnet build -c Release
 # Now generate the bundle
 # Note: if your DbContext is in a different project, 
 # you might need to add: --project NameOfDataProject.csproj
+# Inject a dummy JWT secret so the EF Core design-time build doesn't crash
+ENV Jwt__Secret="dummy_secret_key_for_build_purposes_only_12345!"
+
 RUN dotnet ef migrations bundle \
     --self-contained \
-    -r linux-x64 \
+    -r linux-arm64 \
     -o /app/publish/migrate \
     --configuration Release
-
 # Publish the API
 RUN dotnet publish -c Release -o /app/publish --no-build
 
