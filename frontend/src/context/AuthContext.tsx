@@ -39,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (rt) authApi.logout(rt).catch(() => {})
     clearToken()
     localStorage.removeItem('user')
+    localStorage.removeItem('refreshToken')  // ← add this
     setState({ user: null, accessToken: null })
   }, [])
 

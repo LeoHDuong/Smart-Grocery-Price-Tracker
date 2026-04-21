@@ -33,7 +33,37 @@ public class ProductService(AppDbContext db) : IProductService
         if (query.CategoryId.HasValue)
             q = q.Where(p => p.CategoryId == query.CategoryId.Value);
 
-        // Sort
+        // Price sort: computed in-memory as price-per-unit (lowestPrice / unitSize)
+        if (query.SortBy?.ToLower() == "price")
+        {
+            var all = await q.ToListAsync(ct);
+
+            static decimal PricePerUnit(Product p)
+            {
+                var price = p.PriceRecords
+                    .GroupBy(pr => pr.StoreId)
+                    .Select(g => g.OrderByDescending(pr => pr.RecordedAt).First())
+                    .OrderBy(pr => pr.Price)
+                    .FirstOrDefault()?.Price;
+
+                if (price == null) return decimal.MaxValue; // no price → sort last
+                return p.UnitSize > 0 ? price.Value / p.UnitSize : price.Value;
+            }
+
+            var sorted = query.Descending
+                ? all.OrderByDescending(PricePerUnit)
+                : all.OrderBy(PricePerUnit);
+
+            var items = sorted
+                .Skip((query.Page - 1) * query.PageSize)
+                .Take(query.PageSize)
+                .Select(MapToResponseDto)
+                .ToList();
+
+            return new PagedResult<ProductResponseDto>(items, all.Count, query.Page, query.PageSize);
+        }
+
+        // DB-level sort for name / createdAt
         q = (query.SortBy?.ToLower(), query.Descending) switch
         {
             ("name",      false) => q.OrderBy(p => p.Name),
@@ -50,9 +80,9 @@ public class ProductService(AppDbContext db) : IProductService
             .Take(query.PageSize)
             .ToListAsync(ct);
 
-        var items = products.Select(MapToResponseDto);
+        var items2 = products.Select(MapToResponseDto);
 
-        return new PagedResult<ProductResponseDto>(items, totalCount, query.Page, query.PageSize);
+        return new PagedResult<ProductResponseDto>(items2, totalCount, query.Page, query.PageSize);
     }
 
     public async Task<ProductDetailDto?> GetByIdAsync(Guid id, CancellationToken ct = default)

@@ -24,6 +24,8 @@ export default function PriceCompare() {
   const [rows, setRows] = useState<RowData[]>([])
   const [searching, setSearching] = useState(false)
   const [searched, setSearched] = useState(false)
+  const [krogerLoading, setKrogerLoading] = useState(false)
+  const [krogerMsg, setKrogerMsg] = useState('')
   const debounced = useDebounce(query, 350)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -39,7 +41,7 @@ export default function PriceCompare() {
 
     setSearching(true)
     products
-      .list({ search: debounced, pageSize: 20 })
+      .list({ search: debounced, pageSize: 20, sortBy: 'price', descending: false })
       .then(res => {
         if (ctrl.signal.aborted) return
         setRows(res.items.map(p => ({ product: p, history: null, expanded: false, loading: false })))
@@ -48,6 +50,28 @@ export default function PriceCompare() {
       .catch(() => { if (!ctrl.signal.aborted) setRows([]) })
       .finally(() => { if (!ctrl.signal.aborted) setSearching(false) })
   }, [debounced])
+
+  async function fetchKroger() {
+    if (!query.trim()) return
+    setKrogerLoading(true)
+    setKrogerMsg('')
+    try {
+      const token = localStorage.getItem('accessToken')
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/kroger/search?q=${encodeURIComponent(query)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      setKrogerMsg(`Added ${data.length} Kroger product(s) to database.`)
+      // Refresh product list
+      const updated = await products.list({ search: query, pageSize: 20, sortBy: 'price', descending: false })
+      setRows(updated.items.map(p => ({ product: p, history: null, expanded: false, loading: false })))
+      setSearched(true)
+    } catch {
+      setKrogerMsg('Failed to fetch Kroger prices.')
+    } finally {
+      setKrogerLoading(false)
+    }
+  }
 
   async function toggleRow(idx: number) {
     const row = rows[idx]
@@ -95,6 +119,28 @@ export default function PriceCompare() {
         )}
       </div>
 
+      {/* Kroger fetch button */}
+      {query.trim() && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={fetchKroger}
+            disabled={krogerLoading}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-2xl transition-colors"
+          >
+            {krogerLoading
+              ? <Loader2 size={14} className="animate-spin" />
+              : <span>🛒</span>}
+            Fetch Kroger Prices
+          </button>
+          {krogerMsg && (
+            <span className="text-xs text-emerald-600 font-medium">{krogerMsg}</span>
+          )}
+          {!krogerMsg && (
+            <span className="text-xs text-gray-400">Pull live prices from Kroger into the database</span>
+          )}
+        </div>
+      )}
+
       {/* Results table */}
       {(rows.length > 0 || showSkeleton) && (
         <div className="bg-white dark:bg-slate-900/80 backdrop-blur-xl rounded-3xl shadow-md border border-gray-100 dark:border-slate-800/60 overflow-x-auto transition-colors duration-300">
@@ -104,7 +150,7 @@ export default function PriceCompare() {
                 <th className="text-left px-5 py-3 font-semibold">Product</th>
                 <th className="text-left px-5 py-3 font-semibold hidden sm:table-cell">Brand</th>
                 <th className="text-left px-5 py-3 font-semibold hidden md:table-cell">Category</th>
-                <th className="text-right px-5 py-3 font-semibold">Best Price</th>
+                <th className="text-right px-5 py-3 font-semibold">Best Price / Unit</th>
                 <th className="text-left px-5 py-3 font-semibold hidden lg:table-cell">Cheapest Store</th>
                 <th className="text-right px-5 py-3 font-semibold hidden sm:table-cell">Savings Potential</th>
                 <th className="px-5 py-3 w-10" />
@@ -130,7 +176,12 @@ export default function PriceCompare() {
                         onClick={() => toggleRow(idx)}
                         className="border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/40 cursor-pointer transition-colors"
                       >
-                        <td className="px-5 py-3.5 font-medium text-gray-800 dark:text-slate-200">{row.product.name}</td>
+                        <td className="px-5 py-3.5">
+                          <p className="font-medium text-gray-800 dark:text-slate-200">{row.product.name}</p>
+                          {row.product.unit && row.product.unitSize > 0 && (
+                            <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">{row.product.unitSize} {row.product.unit}</p>
+                          )}
+                        </td>
                         <td className="px-5 py-3.5 text-gray-500 dark:text-slate-400 hidden sm:table-cell">
                           {row.product.brand ?? <span className="text-gray-300">—</span>}
                         </td>
@@ -139,10 +190,19 @@ export default function PriceCompare() {
                             ? <span className="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full"><Tag size={10} />{row.product.categoryName}</span>
                             : <span className="text-gray-300">—</span>}
                         </td>
-                        <td className="px-5 py-3.5 text-right font-semibold text-emerald-700">
-                          {row.product.lowestPrice != null
-                            ? `$${row.product.lowestPrice.toFixed(2)}`
-                            : <span className="text-gray-300 font-normal">—</span>}
+                        <td className="px-5 py-3.5 text-right">
+                          {row.product.lowestPrice != null ? (
+                            <>
+                              <p className="font-semibold text-emerald-700">${row.product.lowestPrice.toFixed(2)}</p>
+                              {row.product.unit && row.product.unitSize > 0 && (
+                                <p className="text-xs text-gray-400 dark:text-slate-500 mt-0.5">
+                                  ${(row.product.lowestPrice / row.product.unitSize).toFixed(2)}/{row.product.unit}
+                                </p>
+                              )}
+                            </>
+                          ) : (
+                            <span className="text-gray-300 font-normal">—</span>
+                          )}
                         </td>
                         <td className="px-5 py-3.5 text-gray-500 hidden lg:table-cell">
                           {row.product.lowestPriceStore ?? <span className="text-gray-300">—</span>}
@@ -219,8 +279,8 @@ export default function PriceCompare() {
             <ScanSearch size={36} className="text-gray-300 dark:text-slate-600" strokeWidth={1.5} />
           </div>
           <div>
-            <p className="text-base font-semibold text-gray-700 dark:text-slate-300">No results for &ldquo;{query}&rdquo;</p>
-            <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Try a different product name or check your spelling.</p>
+            <p className="text-base font-semibold text-gray-700 dark:text-slate-300">No results for "{query}"</p>
+            <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Try a different product name or click "Fetch Kroger Prices" above.</p>
           </div>
         </div>
       )}
