@@ -67,6 +67,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorizationBuilder()
     .AddPolicy("StaffOnly", policy => policy.RequireRole("Staff"));
 
+// ── CORS ──────────────────────────────────────────────────────────────────────
+builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+    p.WithOrigins("http://localhost:5173")
+     .AllowAnyHeader()
+     .AllowAnyMethod()));
+
 // ── Services ──────────────────────────────────────────────────────────────────
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<IUserService,         UserService>();
@@ -83,6 +89,7 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI();
 
+app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -93,6 +100,47 @@ if (app.Environment.IsDevelopment())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     await DbSeeder.SeedAsync(db);
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OCR  (mock — simulates receipt scanning)
+// ══════════════════════════════════════════════════════════════════════════════
+
+app.MapPost("/api/prices/ocr", async (IFormFile image, AppDbContext db) =>
+{
+    await Task.Delay(2500);
+
+    var products = await db.Products
+        .Include(p => p.PriceRecords)
+        .ThenInclude(pr => pr.Store)
+        .Where(p => p.PriceRecords.Any())
+        .ToListAsync();
+
+    if (products.Count == 0)
+        return Results.Ok(Array.Empty<object>());
+
+    var rng     = new Random();
+    var picked  = products.OrderBy(_ => rng.Next()).Take(3).ToList();
+    var results = picked.Select(p =>
+    {
+        var record = p.PriceRecords.OrderBy(_ => rng.Next()).First();
+        var noise  = (decimal)(rng.NextDouble() * 0.4 - 0.2); // ±$0.20 scan variance
+        var scannedPrice = Math.Max(0.01m, Math.Round(record.Price + noise, 2));
+        return new
+        {
+            productId    = p.Id,
+            productName  = p.Name,
+            brand        = p.Brand,
+            storeId      = record.StoreId,
+            storeName    = record.Store.Name,
+            scannedPrice,
+        };
+    });
+
+    return Results.Ok(results);
+})
+.WithTags("OCR")
+.DisableAntiforgery()
+.RequireAuthorization();
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AUTH  (public)
