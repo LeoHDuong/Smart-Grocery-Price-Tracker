@@ -42,13 +42,16 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=myapp;Username=postgres;Password=postgres
-      # Injecting the secret here so the API can start
-      - Jwt__Secret=${Jwt__Secret:-super_secret_key_for_local_development_make_it_long_12345!}
-    depends_on:
-      db:
-        condition: service_healthy
-      migration:
-        condition: service_completed_successfully
+      - Jwt__Secret=${JWT_SECRET:-your-super-secret-key-at-least-32-characters-long!!}
+      - Jwt__Issuer=${JWT_ISSUER:-MyApp}
+      - Jwt__Audience=${JWT_AUDIENCE:-MyApp}
+      - Jwt__AccessTokenMinutes=${JWT_ACCESS_TOKEN_MINUTES:-15}
+      - Jwt__RefreshTokenDays=${JWT_REFRESH_TOKEN_DAYS:-7}
+  depends_on:
+    db:
+      condition: service_healthy
+    migration:
+      condition: service_completed_successfully
 
   frontend:
     build: ./frontend
