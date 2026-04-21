@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { ShoppingCart, AlertCircle, Loader2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -13,9 +13,6 @@ export default function Login() {
   const { login }  = useAuth()
   const { theme }  = useTheme()
   const navigate   = useNavigate()
-  const location   = useLocation()
-  const from = (location.state as { from?: string })?.from ?? '/'
-
   const [email,    setEmail]    = useState('')
   const [password, setPassword] = useState('')
   const [error,    setError]    = useState<string | null>(null)
@@ -27,7 +24,7 @@ export default function Login() {
     setLoading(true)
     try {
       await login(email, password)
-      navigate(from, { replace: true })
+      navigate('/', { replace: true })
     } catch {
       setError('Invalid email or password.')
     } finally {
