@@ -83,6 +83,10 @@ builder.Services.AddScoped<IPriceRecordService,  PriceRecordService>();
 builder.Services.AddScoped<IShoppingListService, ShoppingListService>();
 builder.Services.AddScoped<IPriceAlertService,   PriceAlertService>();
 builder.Services.AddScoped<IScraperJobService,   ScraperJobService>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<KrogerService>(sp => new KrogerService(sp.GetRequiredService<IHttpClientFactory>().CreateClient(), sp.GetRequiredService<IConfiguration>()));
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<KrogerService>(sp => new KrogerService(sp.GetRequiredService<IHttpClientFactory>().CreateClient(), sp.GetRequiredService<IConfiguration>()));
 
 var app = builder.Build();
 
@@ -658,6 +662,95 @@ app.MapPost("/scraper-jobs/{id:guid}/failed", async (Guid id, string errorMessag
 .WithTags("Scraper Jobs")
 .RequireAuthorization("StaffOnly");
 
+
+// KROGER  (public search - requires auth)
+app.MapGet("/kroger/search", async (string q, KrogerService kroger, AppDbContext db) =>
+{
+    if (string.IsNullOrWhiteSpace(q)) return Results.BadRequest("Query required");
+
+    var krogerProducts = await kroger.SearchProducts(q);
+
+    // Ensure Kroger store exists in DB
+    var store = await db.Stores.FirstOrDefaultAsync(s => s.ChainName == "Kroger");
+    if (store is null)
+    {
+        store = new MyApp.Api.Entities.Store
+        {
+            Id        = Guid.NewGuid(),
+            Name      = "Kroger",
+            ChainName = "Kroger",
+            WebsiteUrl = "https://www.kroger.com",
+            CreatedAt = DateTime.UtcNow,
+        };
+        db.Stores.Add(store);
+        await db.SaveChangesAsync();
+    }
+
+    var results = new List<object>();
+
+    foreach (var kp in krogerProducts)
+    {
+        if (kp.items.Count == 0 || kp.items[0].price == null) continue;
+
+        var price = kp.items[0].price!.promo > 0 ? kp.items[0].price!.promo : kp.items[0].price!.regular;
+        if (price <= 0) continue;
+
+        var imageUrl = kp.images.FirstOrDefault(i => i.perspective == "front")
+            ?.sizes.FirstOrDefault(s => s.size == "medium")?.url
+            ?? kp.images.FirstOrDefault()?.sizes.FirstOrDefault()?.url;
+
+        // Find or create product
+        var product = await db.Products.FirstOrDefaultAsync(p => p.Name == kp.description && p.Brand == kp.brand);
+        if (product is null)
+        {
+            product = new MyApp.Api.Entities.Product
+            {
+                Id        = Guid.NewGuid(),
+                Name      = kp.description,
+                Brand     = kp.brand,
+                ImageUrl  = imageUrl,
+                UnitSize  = 1,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            };
+            db.Products.Add(product);
+            await db.SaveChangesAsync();
+        }
+
+        // Add price record
+        var record = new MyApp.Api.Entities.PriceRecord
+        {
+            Id         = Guid.NewGuid(),
+            ProductId  = product.Id,
+            StoreId    = store.Id,
+            Price      = price,
+            OriginalPrice = kp.items[0].price!.promo > 0 ? kp.items[0].price!.regular : null,
+            IsOnSale   = kp.items[0].price!.promo > 0,
+            Currency   = "USD",
+            Source     = "kroger-api",
+            RecordedAt = DateTime.UtcNow,
+        };
+        db.PriceRecords.Add(record);
+
+        results.Add(new
+        {
+            productId   = product.Id,
+            name        = product.Name,
+            brand       = product.Brand,
+            imageUrl    = imageUrl,
+            price       = price,
+            isOnSale    = record.IsOnSale,
+            originalPrice = record.OriginalPrice,
+            store       = "Kroger",
+        });
+    }
+
+    await db.SaveChangesAsync();
+    return Results.Ok(results);
+})
+.WithTags("Kroger")
+.RequireAuthorization();
+
 app.Run();
 
 // ── ClaimsPrincipal extension ─────────────────────────────────────────────────
@@ -671,3 +764,5 @@ public static class ClaimsPrincipalExtensions
         return Guid.Parse(value);
     }
 }
+
+

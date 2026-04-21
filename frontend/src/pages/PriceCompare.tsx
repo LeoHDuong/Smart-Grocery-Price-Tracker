@@ -24,6 +24,8 @@ export default function PriceCompare() {
   const [rows, setRows] = useState<RowData[]>([])
   const [searching, setSearching] = useState(false)
   const [searched, setSearched] = useState(false)
+  const [krogerLoading, setKrogerLoading] = useState(false)
+  const [krogerMsg, setKrogerMsg] = useState('')
   const debounced = useDebounce(query, 350)
   const abortRef = useRef<AbortController | null>(null)
 
@@ -48,6 +50,28 @@ export default function PriceCompare() {
       .catch(() => { if (!ctrl.signal.aborted) setRows([]) })
       .finally(() => { if (!ctrl.signal.aborted) setSearching(false) })
   }, [debounced])
+
+  async function fetchKroger() {
+    if (!query.trim()) return
+    setKrogerLoading(true)
+    setKrogerMsg('')
+    try {
+      const token = localStorage.getItem('accessToken')
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/kroger/search?q=${encodeURIComponent(query)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      setKrogerMsg(`Added ${data.length} Kroger product(s) to database.`)
+      // Refresh product list
+      const updated = await products.list({ search: query, pageSize: 20 })
+      setRows(updated.items.map(p => ({ product: p, history: null, expanded: false, loading: false })))
+      setSearched(true)
+    } catch {
+      setKrogerMsg('Failed to fetch Kroger prices.')
+    } finally {
+      setKrogerLoading(false)
+    }
+  }
 
   async function toggleRow(idx: number) {
     const row = rows[idx]
@@ -94,6 +118,28 @@ export default function PriceCompare() {
           <Loader2 size={15} className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-500 animate-spin" />
         )}
       </div>
+
+      {/* Kroger fetch button */}
+      {query.trim() && (
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={fetchKroger}
+            disabled={krogerLoading}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-2xl transition-colors"
+          >
+            {krogerLoading
+              ? <Loader2 size={14} className="animate-spin" />
+              : <span>🛒</span>}
+            Fetch Kroger Prices
+          </button>
+          {krogerMsg && (
+            <span className="text-xs text-emerald-600 font-medium">{krogerMsg}</span>
+          )}
+          {!krogerMsg && (
+            <span className="text-xs text-gray-400">Pull live prices from Kroger into the database</span>
+          )}
+        </div>
+      )}
 
       {/* Results table */}
       {(rows.length > 0 || showSkeleton) && (
@@ -219,8 +265,8 @@ export default function PriceCompare() {
             <ScanSearch size={36} className="text-gray-300 dark:text-slate-600" strokeWidth={1.5} />
           </div>
           <div>
-            <p className="text-base font-semibold text-gray-700 dark:text-slate-300">No results for &ldquo;{query}&rdquo;</p>
-            <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Try a different product name or check your spelling.</p>
+            <p className="text-base font-semibold text-gray-700 dark:text-slate-300">No results for "{query}"</p>
+            <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Try a different product name or click "Fetch Kroger Prices" above.</p>
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
+RUN echo "VITE_API_URL=http://localhost:5105" > .env
 RUN npm run build
 
 FROM nginx:alpine
