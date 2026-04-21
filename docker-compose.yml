@@ -26,9 +26,6 @@ services:
     # Runs the bundle created in the Dockerfile
     entrypoint: ./migrate
     command: --connection "Host=db;Port=5432;Database=myapp;Username=postgres;Password=postgres"
-    environment:
-      # Injecting the secret here so the migration doesn't crash on startup
-      - Jwt__Secret=${Jwt__Secret:-super_secret_key_for_local_development_make_it_long_12345!}
     depends_on:
       db:
         condition: service_healthy
