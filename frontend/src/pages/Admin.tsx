@@ -2,12 +2,13 @@ import { useEffect, useState, useCallback, useRef, type ElementType } from 'reac
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Trash2, Loader2, AlertTriangle, PackageSearch, Users, Package,
-  Plus, Pencil, X, Store, Tag, Check, ShieldCheck, Search
+  Plus, Pencil, X, Store, Tag, Check, ShieldCheck, Search, DollarSign
 } from 'lucide-react'
 import {
   products as productsApi,
   stores as storesApi,
   categories as categoriesApi,
+  prices as pricesApi,
   type ProductResponseDto, type ProductCreateDto,
   type UserResponseDto,
   type StoreResponseDto, type StoreCreateDto,
@@ -140,6 +141,9 @@ function Empty({ icon: Icon, label, sub, onAdd }: { icon: ElementType; label: st
 type ProductForm = { name: string; brand: string; unit: string; unitSize: string; categoryId: string; imageUrl: string }
 const emptyProduct = (): ProductForm => ({ name: '', brand: '', unit: '', unitSize: '1', categoryId: '', imageUrl: '' })
 
+type PriceForm = { storeId: string; price: string; originalPrice: string; isOnSale: boolean }
+const emptyPriceForm = (): PriceForm => ({ storeId: '', price: '', originalPrice: '', isOnSale: false })
+
 function ProductsTab() {
   const [list,          setList]          = useState<ProductResponseDto[]>([])
   const [cats,          setCats]          = useState<CategoryResponseDto[]>([])
@@ -154,16 +158,21 @@ function ProductsTab() {
   const [searchQuery,   setSearchQuery]   = useState('')
   const [krogerLoading, setKrogerLoading] = useState(false)
   const [krogerMsg,     setKrogerMsg]     = useState('')
+  const [stores,        setStores]        = useState<StoreResponseDto[]>([])
+  const [priceTarget,   setPriceTarget]   = useState<ProductResponseDto | null>(null)
+  const [priceForm,     setPriceForm]     = useState<PriceForm>(emptyPriceForm())
+  const [priceSaving,   setPriceSaving]   = useState(false)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const load = useCallback(async (search = '') => {
     setLoading(true); setError(null)
     try {
-      const [res, catRes] = await Promise.all([
+      const [res, catRes, storeRes] = await Promise.all([
         productsApi.list({ pageSize: 100, sortBy: 'price', descending: false, ...(search ? { search } : {}) }),
         categoriesApi.list(),
+        storesApi.list(),
       ])
-      setList(res.items); setCats(catRes)
+      setList(res.items); setCats(catRes); setStores(storeRes)
     } catch { setError('Failed to load products.') }
     finally { setLoading(false) }
   }, [])
@@ -228,11 +237,64 @@ function ProductsTab() {
     finally { setDeleting(null) }
   }
 
+  async function savePrice() {
+    if (!priceTarget || !priceForm.storeId || !priceForm.price) return
+    setPriceSaving(true); setError(null)
+    try {
+      await pricesApi.create({
+        productId:     priceTarget.id,
+        storeId:       priceForm.storeId,
+        price:         parseFloat(priceForm.price),
+        originalPrice: priceForm.originalPrice ? parseFloat(priceForm.originalPrice) : undefined,
+        isOnSale:      priceForm.isOnSale,
+      })
+      setPriceTarget(null)
+      await load(searchQuery)
+    } catch { setError('Failed to save price.') }
+    finally { setPriceSaving(false) }
+  }
+
   const delTarget = list.find(p => p.id === deleteId)
 
   return (
     <>
       <AnimatePresence>
+        {priceTarget && (
+          <Modal title={`Set price — ${priceTarget.name}`} onClose={() => setPriceTarget(null)}>
+            {error && <Err msg={error} />}
+            <div className="space-y-3">
+              <Field label="Store *">
+                <select className={inputCls} value={priceForm.storeId} onChange={e => setPriceForm(f => ({ ...f, storeId: e.target.value }))}>
+                  <option value="">Select a store…</option>
+                  {stores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Price *">
+                  <input className={inputCls} type="number" min="0" step="0.01" placeholder="0.00"
+                    value={priceForm.price} onChange={e => setPriceForm(f => ({ ...f, price: e.target.value }))} />
+                </Field>
+                <Field label="Original price">
+                  <input className={inputCls} type="number" min="0" step="0.01" placeholder="0.00"
+                    value={priceForm.originalPrice} onChange={e => setPriceForm(f => ({ ...f, originalPrice: e.target.value }))} />
+                </Field>
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={priceForm.isOnSale} onChange={e => setPriceForm(f => ({ ...f, isOnSale: e.target.checked }))}
+                  className="w-4 h-4 rounded accent-emerald-600" />
+                <span className="text-sm text-gray-600 dark:text-slate-300">On sale</span>
+              </label>
+            </div>
+            <div className="flex gap-3 justify-end pt-2">
+              <button onClick={() => setPriceTarget(null)} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl transition-colors">Cancel</button>
+              <button onClick={savePrice} disabled={!priceForm.storeId || !priceForm.price || priceSaving}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 rounded-xl transition-colors">
+                {priceSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                Save price
+              </button>
+            </div>
+          </Modal>
+        )}
         {showForm && (
           <Modal title={editItem ? 'Edit product' : 'Add product'} onClose={() => setShowForm(false)}>
             {error && <Err msg={error} />}
@@ -324,7 +386,7 @@ function ProductsTab() {
                 <Th>Category</Th>
                 <Th right>Best price</Th>
                 <Th right>Trend</Th>
-                <th className="px-5 py-3 w-20" />
+                <th className="px-5 py-3 w-28" />
               </tr>
             </thead>
             <tbody>
@@ -346,6 +408,7 @@ function ProductsTab() {
                       {deleting === p.id
                         ? <Loader2 size={14} className="animate-spin text-gray-400" />
                         : <>
+                          <ActionBtn onClick={() => { setPriceTarget(p); setPriceForm(emptyPriceForm()) }} icon={DollarSign} />
                           <ActionBtn onClick={() => openEdit(p)} icon={Pencil} />
                           <ActionBtn onClick={() => setDeleteId(p.id)} icon={Trash2} color="red" />
                         </>}
