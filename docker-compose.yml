@@ -1,5 +1,4 @@
 version: "3.9"
-
 services:
   db:
     image: postgres:15
@@ -18,20 +17,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
   migration:
-    build: 
+    build:
       context: ./backend/MyApp.Api
     container_name: myapp_migration
-    # Runs the bundle created in the Dockerfile
     entrypoint: ./migrate
     command: --connection "Host=db;Port=5432;Database=myapp;Username=postgres;Password=postgres"
+    environment:
+      - Jwt__Secret=supersecretkey1234567890abcdefghijklmn
     depends_on:
       db:
         condition: service_healthy
-
   backend:
-    build: 
+    build:
       context: ./backend/MyApp.Api
     container_name: myapp_backend
     ports:
@@ -44,12 +42,11 @@ services:
       - Jwt__Audience=${JWT_AUDIENCE:-MyApp}
       - Jwt__AccessTokenMinutes=${JWT_ACCESS_TOKEN_MINUTES:-15}
       - Jwt__RefreshTokenDays=${JWT_REFRESH_TOKEN_DAYS:-7}
-  depends_on:
-    db:
-      condition: service_healthy
-    migration:
-      condition: service_completed_successfully
-
+    depends_on:
+      db:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
   frontend:
     build: ./frontend
     container_name: myapp_frontend
@@ -57,6 +54,5 @@ services:
       - "5173:80"
     depends_on:
       - backend
-
 volumes:
   postgres_data:
